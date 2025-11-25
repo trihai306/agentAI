@@ -1,3 +1,5 @@
+# agentAI
+
 # AutoAI Phone - Chat với Android Streaming
 
 Ứng dụng web chat giống ChatGPT với khả năng stream và điều khiển thiết bị Android qua ADB và Mobile-MCP.
