@@ -87,9 +87,10 @@ if ! git diff-index --quiet HEAD --; then
     echo "  2. Stash changes"
     echo "  3. Cancel"
     echo ""
-    read -p "Choose option (1/2/3): " -n 1 -r
+    read -p "Choose option (1/2/3) [default: 1]: " -r
+    REPLY=${REPLY:-1}  # Default to 1 if empty
     echo ""
-
+    
     if [[ $REPLY =~ ^[1]$ ]]; then
         echo "[INFO] Committing changes..."
         git add .
