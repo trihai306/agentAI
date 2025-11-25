@@ -1,0 +1,160 @@
+name: Build Windows Executable
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'python-agent/**'
+  pull_request:
+    branches:
+      - main
+      - master
+    paths:
+      - 'python-agent/**'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Setup venv and install dependencies
+      working-directory: ./python-agent
+      run: |
+        python -m pip install --upgrade pip
+        python -m venv venv_windows
+        venv_windows\Scripts\activate
+        pip install -r requirements.txt
+        pip install pyinstaller
+
+    - name: Create Windows spec file
+      working-directory: ./python-agent
+      run: |
+        python -c "
+        spec_content = '''# -*- mode: python ; coding: utf-8 -*-
+# PyInstaller spec file for Windows GUI version
+
+block_cipher = None
+
+a = Analysis(
+    ['gui.py', 'installer.py', 'main.py'],  # Include all main files
+    pathex=[],
+    binaries=[],
+    datas=[
+        ('config', 'config'),
+        ('agent', 'agent'),  # Include entire agent package
+    ],
+    hiddenimports=[
+        'tkinter',
+        'tkinter.ttk',
+        '_tkinter',
+        'webbrowser',
+        'threading',
+        'subprocess',
+        'pathlib',
+        'installer',
+        'installer.AgentInstaller',
+        # Include main and agent modules
+        'main',
+        'agent',
+        'agent.adb',
+        'agent.adb.adb_client',
+        'agent.adb.adb_installer',
+        'agent.server',
+        'agent.server.http_server',
+        'agent.server.websocket_server',
+        'agent.ui_automator',
+        'asyncio',
+        'yaml',
+        'fastapi',
+        'uvicorn',
+    ],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
+    noarchive=False,
+)
+
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    [],
+    name='AutoAIphoneAgent',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=None,
+)
+'''
+        with open('pyinstaller_windows.spec', 'w') as f:
+            f.write(spec_content)
+        "
+
+    - name: Build GUI executable
+      working-directory: ./python-agent
+      run: |
+        venv_windows\Scripts\activate
+        pyinstaller pyinstaller_windows.spec --clean --distpath dist-windows --workpath build-windows
+
+    - name: Copy venv to dist-windows
+      working-directory: ./python-agent
+      run: |
+        xcopy /E /I /Y venv_windows dist-windows\venv
+
+    - name: Copy config to dist-windows
+      working-directory: ./python-agent
+      run: |
+        xcopy /E /I /Y config dist-windows\config
+
+    - name: Create launcher
+      working-directory: ./python-agent
+      run: |
+        echo @echo off > dist-windows\launcher.bat
+        echo cd /d "%%~dp0" >> dist-windows\launcher.bat
+        echo if exist "venv" ( >> dist-windows\launcher.bat
+        echo     call venv\Scripts\activate.bat >> dist-windows\launcher.bat
+        echo     python gui.py >> dist-windows\launcher.bat
+        echo ) else ( >> dist-windows\launcher.bat
+        echo     AutoAIphoneAgent.exe >> dist-windows\launcher.bat
+        echo ) >> dist-windows\launcher.bat
+
+    - name: Create distribution zip
+      working-directory: ./python-agent/dist-windows
+      run: |
+        powershell Compress-Archive -Path AutoAIphoneAgent.exe,venv,config,launcher.bat -DestinationPath AutoAIphoneAgent-Windows.zip -Force
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: AutoAIphoneAgent-Windows
+        path: python-agent/dist-windows/AutoAIphoneAgent-Windows.zip
+        retention-days: 30
+

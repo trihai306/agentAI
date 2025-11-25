@@ -21,16 +21,39 @@ class AgentInstaller:
         self.root.geometry("800x600")
         self.root.resizable(True, True)
 
+        # Set background color to prevent white screen
+        self.root.configure(bg="#f3f4f6")
+
         # System info
         self.system = platform.system()
         self.is_windows = self.system == "Windows"
         self.is_mac = self.system == "Darwin"
         self.is_linux = self.system == "Linux"
 
-        # Paths
-        self.base_dir = Path(__file__).parent
+        # Paths - handle both script and exe execution
+        if getattr(sys, 'frozen', False):
+            # Running as compiled exe
+            self.base_dir = Path(sys.executable).parent
+        else:
+            # Running as script
+            self.base_dir = Path(__file__).parent
+
         self.venv_dir = self.base_dir / "venv"
         self.requirements_file = self.base_dir / "requirements.txt"
+
+        # Find actual Python executable (not exe file)
+        self.python_exe = self._find_python_executable()
+
+        # Ensure base_dir exists and is writable
+        try:
+            self.base_dir.mkdir(parents=True, exist_ok=True)
+            # Test write permission
+            test_file = self.base_dir / ".test_write"
+            test_file.write_text("test")
+            test_file.unlink()
+        except Exception as e:
+            # Can't use self.log() here, log method not yet available
+            print(f"⚠️ Warning: Cannot write to {self.base_dir}: {e}")
 
         # Status
         self.status = {
@@ -40,8 +63,67 @@ class AgentInstaller:
             "venv": False,
         }
 
-        self.setup_ui()
-        self.check_requirements()
+        # Setup UI first (creates log method)
+        try:
+            self.setup_ui()
+        except Exception as e:
+            # If UI setup fails, show error in window
+            error_label = tk.Label(
+                self.root,
+                text=f"❌ Lỗi khi khởi tạo UI:\n{str(e)}",
+                font=("Arial", 12),
+                fg="#ef4444",
+                bg="#f3f4f6",
+                justify=tk.LEFT,
+                wraplength=700
+            )
+            error_label.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+            import traceback
+            print(f"Error in setup_ui: {traceback.format_exc()}")
+            return
+
+        # Now we can use self.log()
+        if not self.base_dir.exists():
+            self.log(f"⚠️ Warning: Base directory does not exist: {self.base_dir}", "WARNING")
+
+        # Check requirements
+        try:
+            self.check_requirements()
+        except Exception as e:
+            self.log(f"❌ Lỗi khi kiểm tra requirements: {e}", "ERROR")
+            import traceback
+            print(f"Error in check_requirements: {traceback.format_exc()}")
+
+    def _find_python_executable(self):
+        """Find actual Python executable, not exe file"""
+        if getattr(sys, 'frozen', False):
+            # Running as exe - need to find system Python
+            import shutil
+            # Try common Python executables
+            python_names = ['python3', 'python3.11', 'python3.12', 'python']
+
+            for name in python_names:
+                python_path = shutil.which(name)
+                if python_path:
+                    # Verify it's actually Python
+                    try:
+                        result = subprocess.run(
+                            [python_path, '--version'],
+                            capture_output=True,
+                            text=True,
+                            timeout=5
+                        )
+                        if result.returncode == 0:
+                            return python_path
+                    except:
+                        continue
+
+            # If not found, try to use sys.executable's parent (if it's a Python installation)
+            # But this is unlikely for PyInstaller exe
+            return None
+        else:
+            # Running as script - use current Python
+            return sys.executable
 
     def setup_ui(self):
         """Setup UI components"""
@@ -112,13 +194,35 @@ class AgentInstaller:
             )
             status_label.pack(side=tk.LEFT, padx=10)
 
+        # Progress bar frame
+        progress_frame = tk.LabelFrame(main_frame, text="Installation Progress", font=("Arial", 10, "bold"))
+        progress_frame.pack(fill=tk.X, pady=10)
+
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ttk.Progressbar(
+            progress_frame,
+            variable=self.progress_var,
+            maximum=100,
+            length=400,
+            mode='determinate'
+        )
+        self.progress_bar.pack(fill=tk.X, padx=10, pady=10)
+
+        self.progress_label = tk.Label(
+            progress_frame,
+            text="0%",
+            font=("Arial", 10, "bold"),
+            fg="#2563eb"
+        )
+        self.progress_label.pack(pady=(0, 5))
+
         # Log output
         log_frame = tk.LabelFrame(main_frame, text="Installation Log", font=("Arial", 10, "bold"))
         log_frame.pack(fill=tk.BOTH, expand=True, pady=10)
 
         self.log_text = scrolledtext.ScrolledText(
             log_frame,
-            height=15,
+            height=12,
             font=("Consolas", 9),
             bg="#1e1e1e",
             fg="#d4d4d4",
@@ -246,6 +350,7 @@ class AgentInstaller:
 
     def check_adb(self):
         """Check if ADB is installed"""
+        # First check if adb is in PATH
         try:
             result = subprocess.run(
                 ["adb", "version"],
@@ -254,25 +359,72 @@ class AgentInstaller:
                 timeout=5
             )
             if result.returncode == 0:
-                version = result.stdout.split()[0] if result.stdout else "Unknown"
+                version = result.stdout.split("\n")[0] if result.stdout else "Unknown"
                 self.log(f"✅ ADB detected: {version}", "SUCCESS")
                 return True
-            else:
-                self.log("❌ ADB not found in PATH", "WARNING")
-                return False
-        except FileNotFoundError:
-            self.log("❌ ADB not found. Will attempt auto-install.", "WARNING")
-            return False
-        except Exception as e:
-            self.log(f"⚠️ Error checking ADB: {e}", "WARNING")
-            return False
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        except Exception:
+            pass
+
+        # If not in PATH, check common installation locations
+        try:
+            from agent.adb.adb_installer import ADBInstaller
+            install_dir = Path.home() / ".local" / "bin" / "adb"
+            installer = ADBInstaller(install_dir=str(install_dir))
+            adb_path = installer.get_adb_path()
+            if adb_path and Path(adb_path).exists():
+                self.log(f"✅ ADB found at {adb_path}", "SUCCESS")
+                return True
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+        # Check other common locations
+        system = platform.system()
+        if system == "Darwin":  # macOS
+            common_paths = [
+                Path.home() / "Library" / "Android" / "sdk" / "platform-tools" / "adb",
+                Path("/usr/local/bin/adb"),
+                Path("/opt/homebrew/bin/adb"),
+            ]
+        elif system == "Windows":
+            common_paths = [
+                Path.home() / "AppData" / "Local" / "Android" / "Sdk" / "platform-tools" / "adb.exe",
+            ]
+        else:  # Linux
+            common_paths = [
+                Path.home() / "Android" / "Sdk" / "platform-tools" / "adb",
+                Path("/usr/bin/adb"),
+                Path("/usr/local/bin/adb"),
+            ]
+
+        for path in common_paths:
+            if path.exists():
+                self.log(f"✅ ADB found at {path}", "SUCCESS")
+                return True
+
+        # Not found
+        self.log("❌ ADB not found. Will attempt auto-install.", "WARNING")
+        return False
 
     def check_venv(self):
         """Check if virtual environment exists"""
+        # Check bundled venv first (in same directory as exe)
         if self.venv_dir.exists():
             python_exe = self.venv_dir / ("Scripts" if self.is_windows else "bin") / "python"
             if python_exe.exists():
-                self.log("✅ Virtual environment found", "SUCCESS")
+                self.log("✅ Virtual environment found (bundled)", "SUCCESS")
+                return True
+
+        # Check if venv exists in parent directory (for bundled builds)
+        parent_venv = self.base_dir.parent / "venv"
+        if parent_venv.exists():
+            python_exe = parent_venv / ("Scripts" if self.is_windows else "bin") / "python"
+            if python_exe.exists():
+                self.log("✅ Virtual environment found (in parent directory)", "SUCCESS")
+                self.venv_dir = parent_venv  # Update venv_dir to use this
                 return True
 
         self.log("❌ Virtual environment not found", "WARNING")
@@ -282,6 +434,11 @@ class AgentInstaller:
         """Check if dependencies are installed"""
         try:
             python_exe = self.venv_dir / ("Scripts" if self.is_windows else "bin") / "python"
+
+            if not python_exe.exists():
+                self.log("❌ Python executable not found in venv", "WARNING")
+                return False
+
             result = subprocess.run(
                 [str(python_exe), "-m", "pip", "list"],
                 capture_output=True,
@@ -318,58 +475,205 @@ class AgentInstaller:
     def _install_all_thread(self):
         """Install all requirements in background thread"""
         try:
+            total_steps = 0
+            current_step = 0
+
+            # Count total steps needed
+            if not self.status["adb"]:
+                total_steps += 1
+            if not self.status["venv"]:
+                total_steps += 1
+            if not self.status["dependencies"]:
+                total_steps += 1
+
+            if total_steps == 0:
+                self.update_progress(100, "All requirements already installed!")
+                self.root.after(0, self.check_requirements)
+                return
+
             # Install ADB if needed
             if not self.status["adb"]:
+                current_step += 1
+                progress = int((current_step / total_steps) * 100)
+                self.update_progress(progress, f"Installing ADB... ({current_step}/{total_steps})")
                 self.log("Installing ADB...", "INFO")
                 self.install_adb()
+                self.update_progress(progress, f"ADB installation completed ({current_step}/{total_steps})")
 
-            # Create venv if needed
+            # Create venv if needed (skip if bundled venv exists)
             if not self.status["venv"]:
+                # Check if bundled venv exists
+                bundled_venv = self.base_dir / "venv"
+                if bundled_venv.exists():
+                    python_exe = bundled_venv / ("Scripts" if self.is_windows else "bin") / "python"
+                    if python_exe.exists():
+                        self.log("✅ Using bundled virtual environment", "SUCCESS")
+                        self.venv_dir = bundled_venv
+                        self.status["venv"] = True
+                        self.status["dependencies"] = True  # Bundled venv already has dependencies
+                        self.update_progress(100, "Using bundled venv - ready!")
+                        self.root.after(0, self.check_requirements)
+                        return
+
+                # No bundled venv, create new one
+                current_step += 1
+                progress = int((current_step / total_steps) * 100)
+                self.update_progress(progress, f"Creating virtual environment... ({current_step}/{total_steps})")
                 self.log("Creating virtual environment...", "INFO")
                 self.create_venv()
+                self.update_progress(progress, f"Virtual environment created ({current_step}/{total_steps})")
 
-            # Install dependencies if needed
+            # Install dependencies if needed (skip if bundled venv)
             if self.status["venv"] and not self.status["dependencies"]:
+                current_step += 1
+                progress = int((current_step / total_steps) * 100)
+                self.update_progress(progress, f"Installing Python dependencies... ({current_step}/{total_steps})")
                 self.log("Installing Python dependencies...", "INFO")
                 self.install_dependencies()
+                self.update_progress(progress, f"Dependencies installation completed ({current_step}/{total_steps})")
 
-            # Re-check requirements
+            # Complete
+            self.update_progress(100, "Installation completed!")
             self.root.after(0, self.check_requirements)
             self.log("✅ Installation completed!", "SUCCESS")
-            messagebox.showinfo("Success", "All requirements have been installed successfully!")
+            self.root.after(0, lambda: messagebox.showinfo("Success", "All requirements have been installed successfully!"))
 
         except Exception as e:
             self.log(f"❌ Installation failed: {e}", "ERROR")
-            messagebox.showerror("Error", f"Installation failed: {e}")
+            self.update_progress(0, "Installation failed!")
+            self.root.after(0, lambda: messagebox.showerror("Error", f"Installation failed: {e}"))
         finally:
             self.root.after(0, lambda: self.install_btn.config(state="normal"))
+
+    def update_progress(self, value, text=""):
+        """Update progress bar"""
+        self.root.after(0, lambda: self.progress_var.set(value))
+        if text:
+            self.root.after(0, lambda: self.progress_label.config(text=f"{int(value)}% - {text}"))
+        else:
+            self.root.after(0, lambda: self.progress_label.config(text=f"{int(value)}%"))
 
     def install_adb(self):
         """Install ADB"""
         try:
-            # ADB will be auto-installed by ADBClient on first use
-            # For now, just log that it will be handled
-            self.log("ADB will be auto-installed when agent starts", "INFO")
-            self.status["adb"] = True  # Assume it will work
+            # Try to import ADBInstaller
+            try:
+                from agent.adb.adb_installer import ADBInstaller
+            except ImportError:
+                # If not available, try alternative import path
+                try:
+                    import sys
+                    import os
+                    # Add current directory to path
+                    current_dir = Path(__file__).parent
+                    sys.path.insert(0, str(current_dir))
+                    from agent.adb.adb_installer import ADBInstaller
+                except ImportError:
+                    self.log("⚠️ ADBInstaller not available. ADB will be auto-installed when agent starts", "WARNING")
+                    self.status["adb"] = True  # Assume it will work
+                    return
+
+            # Install ADB to user's local bin directory
+            install_dir = Path.home() / ".local" / "bin" / "adb"
+            self.log(f"Installing ADB to {install_dir}...", "INFO")
+
+            installer = ADBInstaller(install_dir=str(install_dir))
+            adb_path = installer.install()
+
+            if adb_path:
+                self.log(f"✅ ADB installed successfully at {adb_path}", "SUCCESS")
+                # Add to PATH for current session
+                installer.add_to_path(adb_path)
+                self.status["adb"] = True
+            else:
+                self.log("⚠️ ADB installation failed. Will attempt auto-install when agent starts", "WARNING")
+                self.status["adb"] = True  # Assume it will work later
+
         except Exception as e:
-            self.log(f"❌ Failed to install ADB: {e}", "ERROR")
-            raise
+            self.log(f"⚠️ ADB installation error: {e}. Will attempt auto-install when agent starts", "WARNING")
+            import traceback
+            print(f"ADB installation error: {traceback.format_exc()}")
+            self.status["adb"] = True  # Assume it will work later
 
     def create_venv(self):
         """Create virtual environment"""
         try:
-            if self.venv_dir.exists():
-                shutil.rmtree(self.venv_dir)
+            # Log paths for debugging
+            self.log(f"Base directory: {self.base_dir}", "INFO")
+            self.log(f"Venv directory: {self.venv_dir}", "INFO")
+            self.log(f"Python executable: {self.python_exe}", "INFO")
 
-            subprocess.run(
-                [sys.executable, "-m", "venv", str(self.venv_dir)],
-                check=True,
-                timeout=60
-            )
-            self.log("✅ Virtual environment created", "SUCCESS")
-            self.status["venv"] = True
+            # Check if Python executable is available
+            if not self.python_exe:
+                raise Exception("Python executable not found! Please install Python 3.8+ from https://www.python.org/")
+
+            if not os.path.exists(self.python_exe):
+                raise Exception(f"Python executable not found at: {self.python_exe}")
+
+            # Check if base_dir is writable
+            if not os.access(str(self.base_dir), os.W_OK):
+                raise Exception(f"No write permission to {self.base_dir}")
+
+            # Remove existing venv if exists
+            if self.venv_dir.exists():
+                self.log("Removing existing virtual environment...", "INFO")
+                try:
+                    shutil.rmtree(self.venv_dir)
+                except Exception as e:
+                    self.log(f"⚠️ Warning: Could not remove existing venv: {e}", "WARNING")
+                    # Try to continue anyway
+
+            # Ensure parent directory exists
+            self.venv_dir.parent.mkdir(parents=True, exist_ok=True)
+
+            self.log("Creating virtual environment (this may take 1-2 minutes)...", "INFO")
+            self.update_progress(50, "Creating virtual environment...")
+
+            # Try using subprocess.run first (simpler and more reliable)
+            try:
+                self.log(f"Attempting to create venv with: {self.python_exe} -m venv {self.venv_dir}", "INFO")
+                result = subprocess.run(
+                    [self.python_exe, "-m", "venv", str(self.venv_dir)],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=300,  # 5 minutes timeout
+                    check=False
+                )
+
+                if result.returncode == 0:
+                    self.update_progress(100, "Virtual environment created!")
+                    self.log("✅ Virtual environment created", "SUCCESS")
+                    self.status["venv"] = True
+                    return
+                else:
+                    error = result.stderr if result.stderr else result.stdout or "Unknown error"
+                    error_msg = error[:500] if len(error) > 500 else error
+                    self.log(f"venv creation failed with return code {result.returncode}", "ERROR")
+                    self.log(f"Error output: {error_msg}", "ERROR")
+                    raise Exception(f"venv creation failed: {error_msg}")
+
+            except subprocess.TimeoutExpired:
+                raise Exception("Virtual environment creation timed out after 5 minutes. This may indicate system issues.")
+            except FileNotFoundError:
+                raise Exception(f"Python executable not found: {sys.executable}")
+            except PermissionError:
+                raise Exception(f"No permission to create venv in {self.venv_dir}. Please check folder permissions.")
+            except Exception as e:
+                # If subprocess.run fails, try alternative method
+                self.log(f"subprocess.run failed: {e}, trying alternative method...", "WARNING")
+                raise
+
         except Exception as e:
-            self.log(f"❌ Failed to create venv: {e}", "ERROR")
+            error_msg = str(e)
+            self.log(f"❌ Failed to create venv: {error_msg}", "ERROR")
+
+            # Provide helpful suggestions
+            if "permission" in error_msg.lower() or "Permission" in error_msg:
+                self.log("💡 Suggestion: Try running with administrator/sudo privileges", "INFO")
+            elif "timeout" in error_msg.lower():
+                self.log("💡 Suggestion: The system may be slow. Try again or check system resources.", "INFO")
+
             raise
 
     def install_dependencies(self):
@@ -379,27 +683,54 @@ class AgentInstaller:
 
             # Upgrade pip
             self.log("Upgrading pip...", "INFO")
+            self.update_progress(10, "Upgrading pip...")
             subprocess.run(
                 [str(python_exe), "-m", "pip", "install", "--upgrade", "pip"],
                 check=True,
                 timeout=120
             )
+            self.update_progress(30, "Pip upgraded, installing dependencies...")
 
             # Install requirements
             self.log("Installing dependencies (this may take a few minutes)...", "INFO")
-            result = subprocess.run(
+            process = subprocess.Popen(
                 [str(python_exe), "-m", "pip", "install", "-r", str(self.requirements_file)],
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
-                timeout=600
+                bufsize=1,
+                universal_newlines=True
             )
 
-            if result.returncode == 0:
+            # Read output line by line and update progress
+            output_lines = []
+            while True:
+                line = process.stdout.readline()
+                if not line and process.poll() is not None:
+                    break
+                if line:
+                    output_lines.append(line.strip())
+                    # Update progress gradually (30% to 90%)
+                    if len(output_lines) % 10 == 0:
+                        progress = min(30 + int((len(output_lines) / 100) * 60), 90)
+                        self.update_progress(progress, f"Installing packages... ({len(output_lines)} packages)")
+
+            returncode = process.wait(timeout=600)
+
+            if returncode == 0:
+                self.update_progress(100, "Dependencies installed successfully!")
                 self.log("✅ Dependencies installed successfully", "SUCCESS")
                 self.status["dependencies"] = True
             else:
-                self.log(f"❌ Failed to install dependencies: {result.stderr}", "ERROR")
-                raise Exception("Dependency installation failed")
+                error_output = '\n'.join(output_lines[-10:])  # Last 10 lines
+                raise Exception(f"pip install failed: {error_output}")
+        except subprocess.TimeoutExpired:
+            if 'process' in locals():
+                process.kill()
+            raise Exception("Dependencies installation timed out")
+        except Exception as e:
+            self.log(f"❌ Failed to install dependencies: {e}", "ERROR")
+            raise
         except Exception as e:
             self.log(f"❌ Failed to install dependencies: {e}", "ERROR")
             raise
@@ -414,44 +745,94 @@ class AgentInstaller:
 
         try:
             python_exe = self.venv_dir / ("Scripts" if self.is_windows else "bin") / "python"
-            main_file = self.base_dir / "main.py"
 
             if not python_exe.exists():
                 messagebox.showerror("Error", "Python executable not found in virtual environment!")
                 return
 
-            if not main_file.exists():
-                messagebox.showerror("Error", "main.py not found!")
-                return
-
             self.log("Starting agent...", "INFO")
 
-            # Open in new window/terminal
-            if self.is_windows:
-                # Use start command to open in new CMD window
-                cmd = f'start "AutoAIphone Agent" cmd /k "{python_exe}" "{main_file}"'
-                subprocess.Popen(cmd, shell=True)
-            elif self.is_mac:
-                # Create AppleScript to open Terminal and run command
-                script = f'''
-                tell application "Terminal"
-                    activate
-                    do script "cd '{self.base_dir}' && '{python_exe}' '{main_file}'"
-                end tell
-                '''
-                subprocess.Popen(["osascript", "-e", script])
-            else:
-                # Linux - use xterm or gnome-terminal
-                subprocess.Popen(
-                    ["xterm", "-e", f"{python_exe} {main_file}"],
-                    cwd=str(self.base_dir)
-                )
+            # Try to import and run main() directly from bundled code
+            try:
+                import sys
 
-            self.log("✅ Agent started in new window", "SUCCESS")
-            messagebox.showinfo("Success", "Agent is starting in a new window!\n\nCheck the terminal window for status.")
+                # If running as exe, main.py is bundled, try to import it
+                if getattr(sys, 'frozen', False):
+                    # Running as exe - main.py is bundled
+                    try:
+                        import main
+                        import asyncio
+                        import threading
+
+                        def run_agent():
+                            try:
+                                asyncio.run(main.main())
+                            except KeyboardInterrupt:
+                                self.log("Agent stopped by user", "INFO")
+                            except Exception as e:
+                                self.log(f"❌ Agent error: {e}", "ERROR")
+                                import traceback
+                                self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
+
+                        # Run in background thread
+                        agent_thread = threading.Thread(target=run_agent, daemon=True)
+                        agent_thread.start()
+                        self.log("✅ Agent started from bundled code", "SUCCESS")
+                        messagebox.showinfo("Success", "Agent is starting!\n\nCheck the log for status.\n\nHTTP: http://127.0.0.1:3001\nWebSocket: ws://127.0.0.1:3002")
+                        return
+                    except ImportError as import_err:
+                        self.log(f"⚠️ Could not import main from bundle: {import_err}, trying file...", "WARNING")
+
+                # Fallback: try to find main.py file
+                main_file = self.base_dir / "main.py"
+                if main_file.exists():
+                    # Open in new window/terminal
+                    if self.is_windows:
+                        cmd = f'start "AutoAIphone Agent" cmd /k "{python_exe}" "{main_file}"'
+                        subprocess.Popen(cmd, shell=True)
+                    elif self.is_mac:
+                        script = f'''
+                        tell application "Terminal"
+                            activate
+                            do script "cd '{self.base_dir}' && '{python_exe}' '{main_file}'"
+                        end tell
+                        '''
+                        subprocess.Popen(["osascript", "-e", script])
+                    else:
+                        subprocess.Popen(
+                            ["xterm", "-e", f"{python_exe} {main_file}"],
+                            cwd=str(self.base_dir)
+                        )
+                    self.log("✅ Agent started in new window", "SUCCESS")
+                    messagebox.showinfo("Success", "Agent is starting in a new window!\n\nCheck the terminal window for status.")
+                else:
+                    messagebox.showerror("Error", "main.py not found and could not import from bundle!")
+
+            except Exception as import_error:
+                self.log(f"⚠️ Import error: {import_error}, trying file method...", "WARNING")
+                # Fallback to file method
+                main_file = self.base_dir / "main.py"
+                if main_file.exists():
+                    if self.is_windows:
+                        cmd = f'start "AutoAIphone Agent" cmd /k "{python_exe}" "{main_file}"'
+                        subprocess.Popen(cmd, shell=True)
+                    elif self.is_mac:
+                        script = f'''
+                        tell application "Terminal"
+                            activate
+                            do script "cd '{self.base_dir}' && '{python_exe}' '{main_file}'"
+                        end tell
+                        '''
+                        subprocess.Popen(["osascript", "-e", script])
+                    self.log("✅ Agent started in new window", "SUCCESS")
+                    messagebox.showinfo("Success", "Agent is starting in a new window!")
+                else:
+                    raise
 
         except Exception as e:
             self.log(f"❌ Failed to start agent: {e}", "ERROR")
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}", "ERROR")
             messagebox.showerror("Error", f"Failed to start agent: {e}")
 
 
