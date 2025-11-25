@@ -1,0 +1,1815 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phone Viewer - Direct ADB Connection</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        @keyframes slideIn {
+            from { transform: translateX(-100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes shimmer {
+            0% { background-position: -1000px 0; }
+            100% { background-position: 1000px 0; }
+        }
+        .animate-fadeIn { animation: fadeIn 0.3s ease-out; }
+        .animate-slideIn { animation: slideIn 0.3s ease-out; }
+        .animate-pulse-slow { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        .shimmer {
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+            background-size: 1000px 100%;
+            animation: shimmer 2s infinite;
+        }
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        }
+        #phoneCanvas {
+            image-rendering: -webkit-optimize-contrast;
+            image-rendering: crisp-edges;
+            image-rendering: pixelated;
+            transition: transform 0.1s ease-out;
+        }
+        .glass {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .glow {
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.5), 0 0 40px rgba(59, 130, 246, 0.3);
+        }
+        .click-indicator {
+            position: absolute;
+            width: 40px;
+            height: 40px;
+            border: 3px solid rgba(59, 130, 246, 0.8);
+            border-radius: 50%;
+            pointer-events: none;
+            animation: clickRipple 0.6s ease-out;
+        }
+        @keyframes clickRipple {
+            0% {
+                transform: scale(0.5);
+                opacity: 1;
+            }
+            100% {
+                transform: scale(2);
+                opacity: 0;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-gray-900 via-gray-800 to-black h-screen flex flex-col">
+    <!-- Header -->
+    <div class="px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-700/50 glass flex-shrink-0">
+        <div class="flex flex-col gap-3">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-3 min-w-0 flex-1">
+                    <div class="w-10 h-10 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-lg glow flex-shrink-0">
+                        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                        </svg>
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <h2 class="text-xl font-bold text-white truncate">Phone Stream - Scrcpy</h2>
+                        <p class="text-xs text-gray-400 truncate">Professional H.264 Streaming • Low Latency</p>
+                    </div>
+                    <div id="fpsCounter" class="hidden px-3 py-1.5 bg-gray-800/80 rounded-lg border border-gray-700/50">
+                        <div class="flex items-center space-x-2">
+                            <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse-slow"></div>
+                            <span class="text-xs font-mono text-green-400"><span id="fpsValue">0</span> FPS</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="flex flex-col gap-2 w-full">
+                <div id="connectionStatus" class="px-4 py-2.5 bg-yellow-600/20 border border-yellow-500/30 rounded-xl text-yellow-300 text-sm">
+                    <div class="flex items-center space-x-2">
+                        <svg class="w-5 h-5 animate-pulse flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        <span>Đang kết nối tới Scrcpy Service...</span>
+                    </div>
+                </div>
+                <div id="deviceSelector" class="hidden flex items-center space-x-2 w-full">
+                    <select id="deviceSelect" class="flex-1 min-w-0 px-4 py-2.5 bg-gray-700/80 text-white rounded-xl border border-gray-600/50 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 outline-none transition-all text-sm">
+                        <option value="">Chọn thiết bị...</option>
+                    </select>
+                    <button id="refreshDevices" class="px-3 py-2.5 bg-gray-700/80 text-white rounded-xl hover:bg-gray-600 border border-gray-600/50 transition-all duration-200 flex items-center justify-center flex-shrink-0" title="Làm mới danh sách thiết bị">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                    </button>
+                </div>
+                <div id="deviceInfo" class="hidden px-4 py-2 bg-blue-600/20 border border-blue-500/30 rounded-lg text-xs text-blue-300"></div>
+                <div id="streamControls" class="hidden flex justify-end">
+                    <button id="startStreamBtn" class="px-5 py-2.5 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-xl hover:from-green-700 hover:to-emerald-700 font-medium shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 flex items-center justify-center space-x-2 text-sm">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span>Bắt đầu Stream</span>
+                    </button>
+                    <button id="stopStreamBtn" class="hidden px-5 py-2.5 bg-gradient-to-r from-red-600 to-rose-600 text-white rounded-xl hover:from-red-700 hover:to-rose-700 font-medium shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 flex items-center justify-center space-x-2 text-sm">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10h6v4H9z" />
+                        </svg>
+                        <span>Dừng Stream</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stream Area -->
+    <div id="streamArea" class="flex-1 relative bg-gradient-to-br from-black via-gray-900 to-black flex items-center justify-center overflow-hidden min-h-0">
+        <div id="noStream" class="flex items-center justify-center h-full text-gray-400">
+            <div class="text-center animate-fadeIn">
+                <div class="w-32 h-32 mx-auto mb-6 rounded-full bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center shadow-2xl border-4 border-gray-700 shimmer">
+                    <svg class="w-16 h-16 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                    </svg>
+                </div>
+                <h3 id="noStreamTitle" class="text-xl font-semibold text-gray-300 mb-2">Chưa chọn thiết bị</h3>
+                <p id="noStreamText" class="text-sm text-gray-500 max-w-sm">Chọn thiết bị từ danh sách ở trên và bắt đầu stream</p>
+            </div>
+        </div>
+        <div id="streamContainer" class="hidden w-full h-full flex items-center justify-center p-4 relative">
+            <div class="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-3xl blur-3xl transform scale-110"></div>
+            <div class="relative w-full h-full flex items-center justify-center">
+                <canvas id="phoneCanvas" class="relative bg-black" style="max-width: 100%; max-height: 100%; cursor: crosshair;"></canvas>
+                <div id="loadingIndicator" class="absolute inset-0 flex items-center justify-center bg-black/50 rounded-3xl">
+                    <div class="text-center px-4">
+                        <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center animate-pulse">
+                            <svg class="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                        </div>
+                        <div class="text-gray-400 text-sm">Đang kết nối stream...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Controls -->
+    <div id="controlsPanel" class="hidden px-4 sm:px-6 py-3 sm:py-4 border-t border-gray-700/50 glass animate-fadeIn flex-shrink-0">
+        <div class="space-y-4">
+            <div class="grid grid-cols-3 gap-3">
+                <button id="btnHome" class="px-4 py-3 bg-gradient-to-br from-gray-700 to-gray-800 text-white rounded-xl hover:from-gray-600 hover:to-gray-700 font-medium shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 flex flex-col items-center justify-center space-y-1 border border-gray-600/50 text-sm">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                    </svg>
+                    <span>Home</span>
+                </button>
+                <button id="btnBack" class="px-4 py-3 bg-gradient-to-br from-gray-700 to-gray-800 text-white rounded-xl hover:from-gray-600 hover:to-gray-700 font-medium shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 flex flex-col items-center justify-center space-y-1 border border-gray-600/50 text-sm">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                    </svg>
+                    <span>Back</span>
+                </button>
+                <button id="btnMenu" class="px-4 py-3 bg-gradient-to-br from-gray-700 to-gray-800 text-white rounded-xl hover:from-gray-600 hover:to-gray-700 font-medium shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-200 flex flex-col items-center justify-center space-y-1 border border-gray-600/50 text-sm">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                    <span>Menu</span>
+                </button>
+            </div>
+            <div class="flex items-center space-x-2 text-xs text-gray-400 bg-gray-800/50 rounded-lg px-4 py-2 border border-gray-700/50">
+                <svg class="w-4 h-4 text-blue-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <p class="text-sm">💡 Scrcpy Professional Streaming • H.264 Codec • Low Latency</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Check if compact mode
+        const urlParams = new URLSearchParams(window.location.search);
+        const isCompact = urlParams.get('compact') === 'true';
+
+        if (isCompact) {
+            // Hide header and controls in compact mode, but keep device selector accessible
+            document.addEventListener('DOMContentLoaded', () => {
+                const header = document.querySelector('body > div:first-child');
+                const controlsPanel = document.getElementById('controlsPanel');
+                if (header) header.style.display = 'none';
+                if (controlsPanel) controlsPanel.style.display = 'none';
+
+                // Make stream area full screen and adjust body
+                document.body.style.padding = '0';
+                document.body.style.margin = '0';
+                const streamArea = document.getElementById('streamArea');
+                if (streamArea) {
+                    streamArea.style.height = '100vh';
+                    streamArea.style.padding = '0';
+                }
+
+                // Adjust canvas to fit container better - no padding, no border
+                const streamContainer = document.getElementById('streamContainer');
+                if (streamContainer) {
+                    streamContainer.style.padding = '0';
+                    // Remove background gradient
+                    const gradientBg = streamContainer.querySelector('div.absolute');
+                    if (gradientBg) {
+                        gradientBg.style.display = 'none';
+                    }
+                }
+
+                // Show device selector in compact mode (it will be controlled by parent)
+                const deviceSelector = document.getElementById('deviceSelector');
+                if (deviceSelector) {
+                    deviceSelector.classList.remove('hidden');
+                    deviceSelector.style.position = 'absolute';
+                    deviceSelector.style.top = '8px';
+                    deviceSelector.style.left = '8px';
+                    deviceSelector.style.right = '8px';
+                    deviceSelector.style.zIndex = '100';
+                    deviceSelector.style.background = 'rgba(17, 24, 39, 0.95)';
+                    deviceSelector.style.backdropFilter = 'blur(8px)';
+                    deviceSelector.style.padding = '8px';
+                    deviceSelector.style.borderRadius = '8px';
+                    deviceSelector.style.border = '1px solid rgba(75, 85, 99, 0.5)';
+                }
+            });
+        }
+
+        const WS_URL = 'ws://127.0.0.1:3002';
+        const HTTP_URL = 'http://127.0.0.1:3001';
+
+        let ws = null;
+        let devices = [];
+        let selectedDevice = null;
+        let streaming = false;
+        let screenshotInterval = null;
+        let frameRequestId = null;
+        let lastUpdateTime = 0;
+        let fps = 0;
+        let frameCount = 0;
+        let fpsStartTime = performance.now();
+        let currentImage = null;
+
+        // WebCodecs decoder state
+        let videoDecoder = null;
+        let decoderConfig = null;
+        let streamFormat = 'screenshot'; // 'screenshot' or 'h264-binary'
+        let useWebCodecs = false;
+        let frameTimestamp = 0;
+        let firstKeyFrameReceived = false; // Track if we've received first key frame after config
+        let savedSPS = null; // Store SPS for prepending to key frames
+        let savedPPS = null; // Store PPS for prepending to key frames
+
+        // Frame buffer management for smooth streaming
+        const frameQueue = [];
+        const MAX_QUEUE_SIZE = 3; // Maximum frames in queue (prevent buffer overflow)
+        let isRendering = false;
+        let droppedFrames = 0;
+        let lastFrameTime = 0;
+        const TARGET_FPS = 60;
+        const FRAME_INTERVAL = 1000 / TARGET_FPS; // ~16.67ms per frame
+        let pendingFrames = 0;
+        let renderScheduled = false;
+
+        // DOM Elements
+        const connectionStatus = document.getElementById('connectionStatus');
+        const deviceSelector = document.getElementById('deviceSelector');
+        const deviceSelect = document.getElementById('deviceSelect');
+        const refreshDevicesBtn = document.getElementById('refreshDevices');
+        const deviceInfo = document.getElementById('deviceInfo');
+        const streamControls = document.getElementById('streamControls');
+        const startStreamBtn = document.getElementById('startStreamBtn');
+        const stopStreamBtn = document.getElementById('stopStreamBtn');
+        const noStream = document.getElementById('noStream');
+        const streamContainer = document.getElementById('streamContainer');
+        const phoneCanvas = document.getElementById('phoneCanvas');
+        // Use desynchronized context for zero latency rendering
+        // Add additional optimizations for smooth rendering
+        const ctx = phoneCanvas.getContext('2d', {
+            alpha: false,
+            desynchronized: true,
+            willReadFrequently: false,  // Optimize for write-only operations
+            powerPreference: 'high-performance' // Use GPU acceleration
+        });
+
+        // Disable image smoothing for pixel-perfect rendering (faster)
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        const controlsPanel = document.getElementById('controlsPanel');
+        const noStreamTitle = document.getElementById('noStreamTitle');
+        const noStreamText = document.getElementById('noStreamText');
+        const fpsCounter = document.getElementById('fpsCounter');
+        const fpsValue = document.getElementById('fpsValue');
+
+        // FPS Counter
+        function updateFPS() {
+            frameCount++;
+            const now = performance.now();
+            const elapsed = (now - fpsStartTime) / 1000;
+            if (elapsed >= 1) {
+                fps = Math.round(frameCount / elapsed);
+                fpsValue.textContent = fps;
+                frameCount = 0;
+                fpsStartTime = now;
+            }
+            if (streaming) {
+                requestAnimationFrame(updateFPS);
+            }
+        }
+
+        // Connect WebSocket with optimized buffer settings
+        function connectWebSocket() {
+            if (ws && ws.readyState === WebSocket.OPEN) return;
+
+            ws = new WebSocket(WS_URL);
+
+            // Optimize WebSocket for binary streaming
+            ws.binaryType = 'arraybuffer'; // Use ArrayBuffer for better performance
+
+            ws.onopen = () => {
+                console.log('Connected to Local App WebSocket');
+                updateConnectionStatus('connected', 'Đã kết nối tới Local App');
+                deviceSelector.classList.remove('hidden');
+                loadDevices();
+
+                // Reset frame queue when reconnecting
+                frameQueue.length = 0;
+                droppedFrames = 0;
+                pendingFrames = 0;
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    // Check if message is binary (H.264 stream)
+                    if (event.data instanceof ArrayBuffer || event.data instanceof Blob) {
+                        handleBinaryMessage(event.data);
+                        return;
+                    }
+
+                    // Handle text messages (JSON)
+                    const data = JSON.parse(event.data);
+                    handleWebSocketMessage(data);
+                } catch (error) {
+                    console.error('Error parsing WebSocket message:', error);
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                updateConnectionStatus('error', 'Lỗi kết nối WebSocket');
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                updateConnectionStatus('disconnected', 'Mất kết nối. Đang thử kết nối lại...');
+                setTimeout(connectWebSocket, 3000);
+            };
+        }
+
+        // Handle binary WebSocket messages (H.264 stream or screenshots)
+        // Optimized with frame queue management to prevent lag
+        let binaryMessageCount = 0;
+        async function handleBinaryMessage(data) {
+            binaryMessageCount++;
+            if (binaryMessageCount <= 5 || binaryMessageCount % 50 === 0) {
+                console.log(`[Frontend] Received binary message #${binaryMessageCount}, size: ${data.byteLength || data.size || 'unknown'}`);
+            }
+
+            if (!streaming) {
+                console.log('[Frontend] Received binary data but streaming is false');
+                return;
+            }
+
+            // Allow both h264-binary and screenshot-png formats
+            if (streamFormat !== 'h264-binary' && streamFormat !== 'screenshot-png') {
+                console.log('[Frontend] Stream format not supported for binary:', streamFormat);
+                return;
+            }
+
+            try {
+                // Convert to ArrayBuffer if needed (optimized)
+                const arrayBuffer = data instanceof Blob ? await data.arrayBuffer() : data;
+                const buffer = new Uint8Array(arrayBuffer);
+
+                if (buffer.length < 5) {
+                    console.log('[DEBUG] Binary message too short:', buffer.length);
+                    return; // Invalid frame
+                }
+
+                // Parse frame: [1 byte: type] [4 bytes: length] [N bytes: data]
+                const type = buffer[0];
+                const length = (buffer[1] << 24) | (buffer[2] << 16) | (buffer[3] << 8) | buffer[4];
+                const frameData = buffer.slice(5, 5 + length);
+
+                if (frameData.length !== length) {
+                    console.log('[DEBUG] Incomplete frame: expected', length, 'got', frameData.length);
+                    return; // Incomplete frame
+                }
+
+                if (binaryMessageCount <= 5 || binaryMessageCount % 50 === 0) {
+                    console.log(`[Frontend] Parsed binary frame: type=${type} (0x${type.toString(16)}), length=${length}`);
+                }
+
+                switch (type) {
+                    case 0x01: // H.264 Config (SPS/PPS) - Always process immediately
+                        console.log('[Frontend] ✅ Handling H.264 config, size:', frameData.length);
+                        await handleH264Config(frameData);
+                        break;
+                    case 0x02: // H.264 Frame - Use frame queue for smooth playback
+                        if (binaryMessageCount <= 10) {
+                            console.log('[Frontend] Handling H.264 frame, size:', frameData.length);
+                        }
+                        queueH264Frame(frameData);
+                        break;
+                    case 0x03: // Screenshot (PNG) from ADB video stream
+                        console.log('[DEBUG] Handling screenshot frame, size:', frameData.length);
+                        queueScreenshotFrame(frameData);
+                        break;
+                    default:
+                        console.log('[DEBUG] Unknown frame type:', type);
+                }
+            } catch (error) {
+                console.error('[DEBUG] Error handling binary message:', error);
+            }
+        }
+
+        // Frame queue management for smooth streaming
+        function queueH264Frame(frameData) {
+            const now = performance.now();
+
+            // Adaptive frame dropping: if queue is full, drop oldest non-key frames
+            if (frameQueue.length >= MAX_QUEUE_SIZE) {
+                // Try to find and remove a non-key frame
+                const nonKeyIndex = frameQueue.findIndex(f => !f.isKeyFrame);
+                if (nonKeyIndex !== -1) {
+                    frameQueue.splice(nonKeyIndex, 1);
+                    droppedFrames++;
+                } else {
+                    // If all are key frames, drop the oldest
+                    frameQueue.shift();
+                    droppedFrames++;
+                }
+            }
+
+            // Check if this is a key frame (IDR)
+            const isKeyFrame = frameData.length >= 5 &&
+                frameData[0] === 0x00 && frameData[1] === 0x00 &&
+                frameData[2] === 0x00 && frameData[3] === 0x01 &&
+                (frameData[4] & 0x1F) === 5; // NAL type 5 = IDR
+
+            frameQueue.push({
+                data: frameData,
+                timestamp: now,
+                isKeyFrame: isKeyFrame
+            });
+
+            // Schedule rendering if not already scheduled
+            if (!renderScheduled) {
+                renderScheduled = true;
+                requestAnimationFrame(processFrameQueue);
+            }
+        }
+
+        function queueScreenshotFrame(pngData) {
+            const now = performance.now();
+
+            // For screenshots, always keep latest (drop old ones)
+            if (frameQueue.length >= MAX_QUEUE_SIZE) {
+                frameQueue.shift();
+                droppedFrames++;
+            }
+
+            frameQueue.push({
+                data: pngData,
+                timestamp: now,
+                isKeyFrame: true,
+                type: 'screenshot'
+            });
+
+            // Schedule rendering if not already scheduled
+            if (!renderScheduled) {
+                renderScheduled = true;
+                requestAnimationFrame(processFrameQueue);
+            }
+        }
+
+        // Process frame queue with timing control
+        async function processFrameQueue() {
+            renderScheduled = false;
+
+            if (!streaming || frameQueue.length === 0) {
+                return;
+            }
+
+            const now = performance.now();
+            const timeSinceLastFrame = now - lastFrameTime;
+
+            // Throttle to target FPS (prevent rendering too fast)
+            if (timeSinceLastFrame < FRAME_INTERVAL && frameQueue.length < MAX_QUEUE_SIZE) {
+                // Schedule next check
+                renderScheduled = true;
+                setTimeout(() => requestAnimationFrame(processFrameQueue), FRAME_INTERVAL - timeSinceLastFrame);
+                return;
+            }
+
+            // Get next frame
+            const frame = frameQueue.shift();
+            if (!frame) {
+                return;
+            }
+
+            lastFrameTime = now;
+
+            try {
+                if (frame.type === 'screenshot') {
+                    await handleScreenshotFrame(frame.data);
+                } else {
+                    await handleH264Frame(frame.data);
+                }
+            } catch (error) {
+                console.error('[Frontend] Error processing frame:', error);
+            }
+
+            // Process next frame if queue has more
+            if (frameQueue.length > 0) {
+                renderScheduled = true;
+                requestAnimationFrame(processFrameQueue);
+            }
+        }
+
+        // Check WebCodecs support
+        function checkWebCodecsSupport() {
+            return 'VideoDecoder' in window && 'EncodedVideoChunk' in window;
+        }
+
+        // Fallback to screenshot streaming if WebCodecs not supported
+        function fallbackToScreenshot() {
+            if (streaming && selectedDevice) {
+                console.warn('WebCodecs not supported, falling back to screenshot streaming');
+                useWebCodecs = false;
+                streamFormat = 'screenshot';
+
+                // Request screenshot stream instead
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        type: 'stopScreenStream',
+                        deviceId: selectedDevice
+                    }));
+
+                    // Restart with screenshot mode
+                    setTimeout(() => {
+                        ws.send(JSON.stringify({
+                            type: 'startScreenStream',
+                            deviceId: selectedDevice,
+                            useScrcpy: false // Force screenshot mode
+                        }));
+                    }, 100);
+                }
+            }
+        }
+
+        // Convert Annex-B SPS/PPS to avcC format (MP4 format for WebCodecs)
+        function annexBToAvcC(sps, pps) {
+            // avcC format structure (ISO/IEC 14496-15):
+            // - configurationVersion (1 byte) = 1
+            // - AVCProfileIndication (1 byte) = profile
+            // - profile_compatibility (1 byte) = constraint
+            // - AVCLevelIndication (1 byte) = level
+            // - lengthSizeMinusOne (1 byte): reserved (6 bits) + lengthSizeMinusOne (2 bits)
+            // - numOfSequenceParameterSets (1 byte): reserved (3 bits) + numOfSPS (5 bits)
+            // - sequenceParameterSetLength (2 bytes, big-endian) = SPS length
+            // - sequenceParameterSetNALUnit (SPS data)
+            // - numOfPictureParameterSets (1 byte) = PPS count
+            // - pictureParameterSetLength (2 bytes, big-endian) = PPS length
+            // - pictureParameterSetNALUnit (PPS data)
+
+            if (!sps || !pps || sps.length === 0 || pps.length === 0) {
+                console.error('[Frontend] Invalid SPS/PPS for avcC conversion');
+                return null;
+            }
+
+            // SPS format: [NAL header][profile][constraint][level][...]
+            // NAL header is first byte, profile/constraint/level are next 3 bytes
+            const profile = sps[1];
+            const constraint = sps[2];
+            const level = sps[3];
+
+            console.log(`[Frontend] SPS: profile=0x${profile.toString(16)}, constraint=0x${constraint.toString(16)}, level=0x${level.toString(16)}`);
+
+            const avcC = new Uint8Array(
+                7 + // Header (1+1+1+1+1+1)
+                2 + sps.length + // SPS length (2) + SPS data
+                1 + 2 + pps.length   // PPS count (1) + PPS length (2) + PPS data
+            );
+
+            let offset = 0;
+
+            // configurationVersion = 1
+            avcC[offset++] = 1;
+
+            // AVCProfileIndication = profile_idc
+            avcC[offset++] = profile;
+
+            // profile_compatibility = constraint flags
+            avcC[offset++] = constraint;
+
+            // AVCLevelIndication = level_idc
+            avcC[offset++] = level;
+
+            // lengthSizeMinusOne: reserved (6 bits) + lengthSizeMinusOne (2 bits)
+            // lengthSizeMinusOne = 3 (4-byte length), reserved = 0b111111
+            // Format: 0b11111111 = 0xFF
+            // Actually: (reserved << 2) | lengthSizeMinusOne = (0b111111 << 2) | 0b11 = 0xFC | 0x03 = 0xFF
+            avcC[offset++] = 0xFF;
+
+            // numOfSequenceParameterSets: reserved (3 bits) + numOfSPS (5 bits)
+            // numOfSPS = 1, reserved = 0b111
+            // Format: 0b11100001 = (0b111 << 5) | 0b00001 = 0xE0 | 0x01 = 0xE1
+            avcC[offset++] = 0xE1;
+
+            // sequenceParameterSetLength (2 bytes, big-endian)
+            avcC[offset++] = (sps.length >> 8) & 0xFF;
+            avcC[offset++] = sps.length & 0xFF;
+
+            // sequenceParameterSetNALUnit (SPS data without start code)
+            avcC.set(sps, offset);
+            offset += sps.length;
+
+            // numOfPictureParameterSets (1 byte)
+            avcC[offset++] = 1;
+
+            // pictureParameterSetLength (2 bytes, big-endian)
+            avcC[offset++] = (pps.length >> 8) & 0xFF;
+            avcC[offset++] = pps.length & 0xFF;
+
+            // pictureParameterSetNALUnit (PPS data without start code)
+            avcC.set(pps, offset);
+            offset += pps.length;
+
+            // Log first 20 bytes for debugging
+            console.log(`[Frontend] avcC bytes (first 20):`, Array.from(avcC.slice(0, Math.min(20, avcC.length))).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
+
+            // Return ArrayBuffer (create new copy to avoid shared buffer issues)
+            return avcC.buffer.slice(0);
+        }
+
+        // Handle H.264 config (SPS/PPS)
+        async function handleH264Config(configData) {
+            if (!checkWebCodecsSupport()) {
+                fallbackToScreenshot();
+                return;
+            }
+
+            if (!useWebCodecs) {
+                return;
+            }
+
+            try {
+                // Initialize VideoDecoder if not already done
+                if (!videoDecoder) {
+                    videoDecoder = new VideoDecoder({
+                        output: (frame) => {
+                            renderVideoFrame(frame);
+                        },
+                        error: (error) => {
+                            console.error('[Frontend] VideoDecoder error:', error);
+                            console.error('[Frontend] Error details:', {
+                                name: error.name,
+                                message: error.message,
+                                stack: error.stack,
+                                decoderState: videoDecoder?.state
+                            });
+
+                            // If this is the first key frame error, try fallback
+                            if (!firstKeyFrameReceived) {
+                                console.error('[Frontend] ❌ First key frame decode failed - WebCodecs may not support this stream format');
+                                console.error('[Frontend] Falling back to screenshot mode...');
+                                useWebCodecs = false;
+                                firstKeyFrameReceived = false;
+
+                                // Try to stop current stream and restart in screenshot mode
+                                if (ws && ws.readyState === WebSocket.OPEN && selectedDevice) {
+                                    ws.send(JSON.stringify({
+                                        type: 'stopScreenStream',
+                                        deviceId: selectedDevice
+                                    }));
+
+                                    // Note: Screenshot mode would need to be implemented separately
+                                    // For now, just disable WebCodecs
+                                }
+                                return;
+                            }
+
+                            // Try to recreate decoder on error (for subsequent frames)
+                            if (videoDecoder && videoDecoder.state === 'closed') {
+                                console.log('[Frontend] Attempting to recreate VideoDecoder...');
+                                try {
+                                    videoDecoder.close();
+                                } catch (e) {
+                                    // Ignore close errors
+                                }
+
+                                // Recreate decoder
+                                videoDecoder = new VideoDecoder({
+                                    output: (frame) => {
+                                        renderVideoFrame(frame);
+                                    },
+                                    error: (error) => {
+                                        console.error('[Frontend] VideoDecoder error (recreated):', error);
+                                        useWebCodecs = false;
+                                    }
+                                });
+
+                                // Reconfigure if we have config
+                                if (decoderConfig) {
+                                    try {
+                                        videoDecoder.configure(decoderConfig);
+                                        firstKeyFrameReceived = false; // Reset to wait for new key frame
+                                        console.log('[Frontend] ✅ VideoDecoder recreated and reconfigured');
+                                    } catch (configError) {
+                                        console.error('[Frontend] Failed to reconfigure decoder:', configError);
+                                        useWebCodecs = false;
+                                    }
+                                } else {
+                                    useWebCodecs = false;
+                                }
+                            } else {
+                                // For non-closed errors, just disable WebCodecs
+                                console.error('[Frontend] Decoder error but not closed - disabling WebCodecs');
+                                useWebCodecs = false;
+                            }
+                        }
+                    });
+                }
+
+                // Log full config data for debugging
+                console.log(`[Frontend] ========== CONFIG DEBUG START ==========`);
+                console.log(`[Frontend] Config data length: ${configData.length} bytes`);
+                if (configData.length <= 100) {
+                    console.log(`[Frontend] Config data (hex):`, Array.from(configData).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
+                } else {
+                    console.log(`[Frontend] Config data (first 100 bytes):`, Array.from(configData.slice(0, 100)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
+                }
+
+                // Extract SPS and PPS from Annex-B format
+                // Config format from H264Parser: [start code 4 bytes][SPS][start code 4 bytes][PPS]
+                // Start code is always 0x00 0x00 0x00 0x01 (4 bytes)
+
+                if (configData.length < 12) {
+                    console.error('[Frontend] Config data too short:', configData.length);
+                    return;
+                }
+
+                // Find first start code (should be at position 0)
+                if (configData[0] !== 0x00 || configData[1] !== 0x00 ||
+                    configData[2] !== 0x00 || configData[3] !== 0x01) {
+                    console.error('[Frontend] Invalid config: first start code not found at position 0');
+                    console.error('[Frontend] First 4 bytes:', Array.from(configData.slice(0, 4)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
+                    return;
+                }
+
+                // SPS starts after first start code (position 4)
+                let spsStart = 4;
+
+                // Find second start code (PPS start)
+                let ppsStart = -1;
+                for (let i = spsStart + 1; i < configData.length - 4; i++) {
+                    if (configData[i] === 0x00 && configData[i + 1] === 0x00 &&
+                        configData[i + 2] === 0x00 && configData[i + 3] === 0x01) {
+                        ppsStart = i + 4;
+                        break;
+                    }
+                }
+
+                // Also check for 3-byte start code
+                if (ppsStart === -1) {
+                    for (let i = spsStart + 1; i < configData.length - 3; i++) {
+                        if (configData[i] === 0x00 && configData[i + 1] === 0x00 &&
+                            configData[i + 2] === 0x01) {
+                            ppsStart = i + 3;
+                            break;
+                        }
+                    }
+                }
+
+                if (ppsStart === -1) {
+                    console.error('[Frontend] Invalid config: second start code (PPS) not found');
+                    console.error('[Frontend] Config data length:', configData.length);
+                    console.error('[Frontend] Full config:', Array.from(configData).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
+                    return;
+                }
+
+                // Extract SPS and PPS (without start codes)
+                // SPS: from position 4 to ppsStart - startCodeLength
+                // PPS: from ppsStart to end
+                let ppsStartCodeLength = 4;
+                if (ppsStart >= 3 && configData[ppsStart - 3] === 0x01) {
+                    ppsStartCodeLength = 3;
+                }
+                const spsEnd = ppsStart - ppsStartCodeLength;
+                const sps = configData.slice(spsStart, spsEnd);
+                const pps = configData.slice(ppsStart);
+
+                // Validate SPS/PPS
+                if (sps.length < 4) {
+                    console.error('[Frontend] SPS too short:', sps.length);
+                    return;
+                }
+                if (pps.length < 1) {
+                    console.error('[Frontend] PPS too short:', pps.length);
+                    return;
+                }
+
+                // Validate NAL unit types
+                const spsNalType = sps[0] & 0x1F;
+                const ppsNalType = pps[0] & 0x1F;
+                if (spsNalType !== 7) {
+                    console.error('[Frontend] Invalid SPS NAL type:', spsNalType, 'expected 7');
+                    return;
+                }
+                if (ppsNalType !== 8) {
+                    console.error('[Frontend] Invalid PPS NAL type:', ppsNalType, 'expected 8');
+                    return;
+                }
+
+                console.log(`[Frontend] ✅ Extracted SPS: ${sps.length} bytes (NAL type: ${spsNalType})`);
+                console.log(`[Frontend] ✅ Extracted PPS: ${pps.length} bytes (NAL type: ${ppsNalType})`);
+                console.log(`[Frontend] SPS first 10 bytes:`, Array.from(sps.slice(0, Math.min(10, sps.length))).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
+                console.log(`[Frontend] PPS first 10 bytes:`, Array.from(pps.slice(0, Math.min(10, pps.length))).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
+
+                // Save SPS/PPS for prepending to key frames
+                savedSPS = Buffer.from(sps);
+                savedPPS = Buffer.from(pps);
+
+                // Get codec string from SPS
+                const codec = getCodecFromSPS(sps);
+
+                // Convert to avcC format
+                const avcC = annexBToAvcC(sps, pps);
+                if (!avcC) {
+                    console.error('[Frontend] Failed to convert to avcC format');
+                    return;
+                }
+
+                console.log(`[Frontend] Converted to avcC format: ${avcC.byteLength} bytes`);
+
+                // Log avcC for debugging
+                const avcCArray = new Uint8Array(avcC);
+                console.log('[Frontend] avcC full bytes:', Array.from(avcCArray).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
+
+                // Parse resolution from SPS (optional, but helps)
+                // If we can't parse, let decoder auto-detect
+                let codedWidth = 0;
+                let codedHeight = 0;
+
+                try {
+                    // Try to parse resolution from SPS (simplified - full SPS parsing is complex)
+                    // For now, let decoder auto-detect by not setting codedWidth/codedHeight
+                    // Or use reasonable defaults
+                } catch (e) {
+                    // Ignore parsing errors
+                }
+
+                // Configure decoder with avcC format
+                // Don't set codedWidth/codedHeight - let decoder auto-detect from SPS
+                // This is more reliable than hardcoding
+                decoderConfig = {
+                    codec: codec || 'avc1.42E01E', // Default H.264 baseline
+                    // codedWidth and codedHeight are optional - decoder will parse from SPS
+                    description: avcC // ArrayBuffer for avcC format
+                };
+
+                // Check if config is supported before configuring
+                try {
+                    const support = await VideoDecoder.isConfigSupported(decoderConfig);
+                    if (!support.supported) {
+                        console.error('[Frontend] Codec config not supported:', support);
+                        console.error('[Frontend] Config:', decoderConfig);
+                        useWebCodecs = false;
+                        return;
+                    }
+                    console.log('[Frontend] ✅ Codec config is supported');
+                } catch (checkError) {
+                    console.error('[Frontend] Error checking config support:', checkError);
+                }
+
+                videoDecoder.configure(decoderConfig);
+                console.log('[Frontend] ✅ VideoDecoder configured with codec:', decoderConfig.codec, 'avcC size:', avcC.byteLength);
+                console.log('[Frontend] Decoder config:', {
+                    codec: decoderConfig.codec,
+                    hasWidth: !!decoderConfig.codedWidth,
+                    hasHeight: !!decoderConfig.codedHeight,
+                    descriptionSize: decoderConfig.description?.byteLength || 0
+                });
+                console.log(`[Frontend] ========== CONFIG DEBUG END ==========`);
+
+                // Reset flag - waiting for first key frame
+                firstKeyFrameReceived = false;
+                frameTimestamp = 0; // Reset timestamp
+            } catch (error) {
+                console.error('[Frontend] ❌ Error configuring VideoDecoder:', error);
+                console.error('[Frontend] Error details:', {
+                    name: error.name,
+                    message: error.message,
+                    stack: error.stack
+                });
+                console.log(`[Frontend] ========== CONFIG DEBUG END (ERROR) ==========`);
+                useWebCodecs = false;
+            }
+        }
+
+        // Get codec string from SPS
+        function getCodecFromSPS(sps) {
+            if (sps.length < 4) return 'avc1.42E01E';
+
+            // Extract profile, constraint, level from SPS
+            const profile = sps[1];
+            const constraint = sps[2];
+            const level = sps[3];
+
+            // Convert to avc1.XXXXXX format
+            const profileHex = profile.toString(16).padStart(2, '0');
+            const constraintHex = constraint.toString(16).padStart(2, '0');
+            const levelHex = level.toString(16).padStart(2, '0');
+
+            return `avc1.${profileHex}${constraintHex}${levelHex}`;
+        }
+
+        // Handle H.264 frame with optimized decoding
+        async function handleH264Frame(frameData) {
+            if (!useWebCodecs || !videoDecoder) {
+                if (binaryMessageCount <= 10) {
+                    console.log('[Frontend] VideoDecoder not ready:', {
+                        useWebCodecs,
+                        hasDecoder: !!videoDecoder,
+                        state: videoDecoder?.state
+                    });
+                }
+                return;
+            }
+
+            if (videoDecoder.state !== 'configured') {
+                if (binaryMessageCount <= 10) {
+                    console.log('[Frontend] VideoDecoder not configured, state:', videoDecoder.state);
+                }
+                return;
+            }
+
+            try {
+                // Validate frame data format
+                if (!frameData || frameData.length < 4) {
+                    console.warn('[Frontend] Invalid frame data: too short');
+                    return;
+                }
+
+                // Check if this is a key frame (IDR)
+                // Frame data is in Annex-B format with start code
+                // A frame can contain multiple NAL units, so we need to check all of them
+                let nalType = 0;
+                let hasStartCode = false;
+                let isKeyFrame = false;
+
+                // Check first NAL unit
+                if (frameData.length >= 5) {
+                    // Check for 4-byte start code
+                    if (frameData[0] === 0x00 && frameData[1] === 0x00 &&
+                        frameData[2] === 0x00 && frameData[3] === 0x01) {
+                        nalType = frameData[4] & 0x1F;
+                        hasStartCode = true;
+                        isKeyFrame = (nalType === 5); // NAL type 5 = IDR
+                    }
+                    // Check for 3-byte start code
+                    else if (frameData.length >= 4 &&
+                             frameData[0] === 0x00 && frameData[1] === 0x00 &&
+                             frameData[2] === 0x01) {
+                        nalType = frameData[3] & 0x1F;
+                        hasStartCode = true;
+                        isKeyFrame = (nalType === 5); // NAL type 5 = IDR
+                    }
+                }
+
+                // If first NAL is not IDR, check if frame contains IDR anywhere
+                // (some encoders put IDR after other NAL units)
+                if (!isKeyFrame && frameData.length > 10) {
+                    // Search for IDR NAL unit (type 5) in the frame
+                    for (let i = 0; i < frameData.length - 5; i++) {
+                        // Check for 4-byte start code
+                        if (frameData[i] === 0x00 && frameData[i + 1] === 0x00 &&
+                            frameData[i + 2] === 0x00 && frameData[i + 3] === 0x01) {
+                            const nalType = frameData[i + 4] & 0x1F;
+                            if (nalType === 5) {
+                                isKeyFrame = true;
+                                break;
+                            }
+                        }
+                        // Check for 3-byte start code
+                        else if (i < frameData.length - 4 &&
+                                 frameData[i] === 0x00 && frameData[i + 1] === 0x00 &&
+                                 frameData[i + 2] === 0x01) {
+                            const nalType = frameData[i + 3] & 0x1F;
+                            if (nalType === 5) {
+                                isKeyFrame = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Validate start code
+                if (!hasStartCode) {
+                    console.warn('[Frontend] Invalid frame: no start code found');
+                    if (binaryMessageCount <= 5) {
+                        console.log('[Frontend] Frame data (first 20 bytes):',
+                            Array.from(frameData.slice(0, Math.min(20, frameData.length)))
+                                .map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
+                    }
+                    return;
+                }
+
+                // CRITICAL: After configuring decoder, we MUST wait for first key frame
+                // Decoding non-key frames before first key frame will cause decoder error
+                if (!firstKeyFrameReceived) {
+                    if (!isKeyFrame) {
+                        // Drop non-key frames until we get first key frame
+                        if (binaryMessageCount <= 10) {
+                            console.log('[Frontend] Waiting for first key frame, dropping non-key frame (NAL type:', nalType, ')');
+                        }
+                        return;
+                    } else {
+                        // First key frame received - log frame info for debugging
+                        console.log('[Frontend] ✅ First key frame received, size:', frameData.length);
+                        console.log('[Frontend] First key frame (first 50 bytes):',
+                            Array.from(frameData.slice(0, Math.min(50, frameData.length)))
+                                .map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
+
+                        // Check if frame already contains SPS/PPS
+                        let frameDataArray = new Uint8Array(frameData);
+                        const hasSPS = savedSPS && Array.from(frameDataArray).some((_, i) => {
+                            return i + savedSPS.length <= frameDataArray.length &&
+                   Array.from(frameDataArray.slice(i, i + savedSPS.length)).every((b, j) => b === savedSPS[j]);
+                        });
+                        const hasPPS = savedPPS && Array.from(frameDataArray).some((_, i) => {
+                            return i + savedPPS.length <= frameDataArray.length &&
+                   Array.from(frameDataArray.slice(i, i + savedPPS.length)).every((b, j) => b === savedPPS[j]);
+                        });
+
+                        console.log('[Frontend] Frame contains SPS:', hasSPS, 'PPS:', hasPPS);
+
+                        // Some decoders require SPS/PPS in the first key frame
+                        // But let's try without prepending first - many streams already have it
+                        // Only prepend if absolutely necessary (commented out for now)
+                        /*
+                        if (savedSPS && savedPPS && (!hasSPS || !hasPPS)) {
+                            // Prepend SPS/PPS to key frame
+                            const startCode = new Uint8Array([0x00, 0x00, 0x00, 0x01]);
+                            const spsWithStartCode = new Uint8Array(startCode.length + savedSPS.length);
+                            spsWithStartCode.set(startCode, 0);
+                            spsWithStartCode.set(savedSPS, startCode.length);
+
+                            const ppsWithStartCode = new Uint8Array(startCode.length + savedPPS.length);
+                            ppsWithStartCode.set(startCode, 0);
+                            ppsWithStartCode.set(savedPPS, startCode.length);
+
+                            // Combine: SPS + PPS + original frame
+                            const combinedFrame = new Uint8Array(
+                                spsWithStartCode.length +
+                                ppsWithStartCode.length +
+                                frameData.length
+                            );
+                            combinedFrame.set(spsWithStartCode, 0);
+                            combinedFrame.set(ppsWithStartCode, spsWithStartCode.length);
+                            combinedFrame.set(frameData, spsWithStartCode.length + ppsWithStartCode.length);
+
+                            console.log('[Frontend] Prepended SPS/PPS to first key frame');
+                            frameData = combinedFrame.buffer;
+                        }
+                        */
+
+                        firstKeyFrameReceived = true;
+                        console.log('[Frontend] Starting decode of first key frame');
+                    }
+                }
+
+                // Check decoder queue size to prevent overflow
+                if (pendingFrames > 10) {
+                    // Too many pending frames, drop this one if it's not a key frame
+                    if (!isKeyFrame) {
+                        droppedFrames++;
+                        return;
+                    }
+                }
+
+                // Create EncodedVideoChunk with Annex-B format (WebCodecs accepts Annex-B)
+                // Use microsecond timestamp for better precision
+                const timestamp = frameTimestamp * (1000000 / TARGET_FPS); // Convert to microseconds
+                frameTimestamp++;
+
+                const chunk = new EncodedVideoChunk({
+                    type: isKeyFrame ? 'key' : 'delta',
+                    timestamp: timestamp,
+                    duration: null,
+                    data: frameData
+                });
+
+                // Decode with error handling
+                try {
+                    pendingFrames++;
+                    videoDecoder.decode(chunk);
+                } catch (decodeError) {
+                    console.error('[Frontend] Decode call error:', decodeError);
+                    pendingFrames = Math.max(0, pendingFrames - 1);
+
+                    // If decoder is closed, try to recreate
+                    if (videoDecoder && videoDecoder.state === 'closed') {
+                        console.log('[Frontend] Decoder closed after error, will be recreated on next error callback');
+                    }
+                }
+            } catch (error) {
+                console.error('[Frontend] Error decoding H.264 frame:', error);
+                console.error('[Frontend] Error details:', {
+                    name: error.name,
+                    message: error.message,
+                    frameLength: frameData?.length
+                });
+                pendingFrames = Math.max(0, pendingFrames - 1);
+            }
+        }
+
+        // Handle screenshot frame (PNG) from ADB video stream
+        async function handleScreenshotFrame(pngData) {
+            try {
+                console.log('[DEBUG] handleScreenshotFrame called, PNG data length:', pngData.length);
+
+                // Validate PNG data (should start with PNG signature)
+                if (pngData.length < 8 ||
+                    pngData[0] !== 0x89 || pngData[1] !== 0x50 || pngData[2] !== 0x4E || pngData[3] !== 0x47) {
+                    console.error('[DEBUG] Invalid PNG data, first bytes:',
+                        Array.from(pngData.slice(0, 8)).map(b => '0x' + b.toString(16).padStart(2, '0')).join(' '));
+                    return;
+                }
+
+                // Create blob from PNG data
+                const blob = new Blob([pngData], { type: 'image/png' });
+                const imageUrl = URL.createObjectURL(blob);
+
+                // Create image element
+                const img = new Image();
+                img.onload = () => {
+                    console.log(`[DEBUG] Image loaded: ${img.width}x${img.height}`);
+                    // Resize canvas if needed
+                    if (phoneCanvas.width !== img.width || phoneCanvas.height !== img.height) {
+                        phoneCanvas.width = img.width;
+                        phoneCanvas.height = img.height;
+                        console.log(`[DEBUG] Canvas resized to ${img.width}x${img.height}`);
+                    }
+
+                    // Draw image to canvas
+                    ctx.drawImage(img, 0, 0);
+                    console.log('[DEBUG] Image drawn to canvas');
+
+                    // Clean up
+                    URL.revokeObjectURL(imageUrl);
+                    loadingIndicator.classList.add('hidden');
+
+                    // Update FPS counter
+                    updateFPS();
+                };
+                img.onerror = (error) => {
+                    console.error('[DEBUG] Image load error:', error);
+                    URL.revokeObjectURL(imageUrl);
+                };
+                img.src = imageUrl;
+            } catch (error) {
+                console.error('[DEBUG] Error handling screenshot frame:', error);
+            }
+        }
+
+        // Render video frame to canvas (optimized for low latency and smooth playback)
+        let renderedFrameCount = 0;
+        function renderVideoFrame(frame) {
+            try {
+                renderedFrameCount++;
+                pendingFrames = Math.max(0, pendingFrames - 1);
+
+                if (renderedFrameCount <= 5 || renderedFrameCount % 60 === 0) {
+                    console.log(`[Frontend] ✅ Rendering frame #${renderedFrameCount}, size: ${frame.displayWidth}x${frame.displayHeight}, dropped: ${droppedFrames}`);
+                }
+
+                // Use immediate rendering for lowest latency
+                if (frame.displayWidth && frame.displayHeight) {
+                    // Resize canvas if needed (only when dimensions change)
+                    if (phoneCanvas.width !== frame.displayWidth ||
+                        phoneCanvas.height !== frame.displayHeight) {
+                        console.log(`[Frontend] Resizing canvas to ${frame.displayWidth}x${frame.displayHeight}`);
+                        phoneCanvas.width = frame.displayWidth;
+                        phoneCanvas.height = frame.displayHeight;
+                    }
+
+                    // Use requestAnimationFrame for smooth rendering (sync with display refresh)
+                    // This ensures frames are rendered at the right time
+                    requestAnimationFrame(() => {
+                        try {
+                            // Draw frame with high-quality rendering
+                            ctx.drawImage(frame, 0, 0);
+
+                            // Close frame immediately to free memory (critical for performance)
+                            frame.close();
+                        } catch (error) {
+                            console.error('[Frontend] Error in RAF rendering:', error);
+                            frame.close(); // Always close frame
+                        }
+                    });
+
+                    if (renderedFrameCount === 1) {
+                        console.log('[Frontend] ✅ First frame rendered! Hiding loading indicator');
+                        loadingIndicator.classList.add('hidden');
+                    }
+
+                    // Update FPS counter
+                    updateFPS();
+                } else {
+                    console.warn('[Frontend] Frame has no display dimensions');
+                    frame.close(); // Always close frame
+                }
+            } catch (error) {
+                console.error('[Frontend] Error rendering video frame:', error);
+                if (frame && typeof frame.close === 'function') {
+                    frame.close(); // Always close frame on error
+                }
+            }
+        }
+
+        // Handle WebSocket messages
+        function handleWebSocketMessage(data) {
+            switch (data.type) {
+                case 'devices':
+                    devices = data.devices || [];
+                    updateDeviceList();
+                    break;
+                case 'screen:updated':
+                    if (data.deviceId && data.screenshot) {
+                        updateScreenshot(data.screenshot);
+                    }
+                    break;
+                case 'screen:streamStarted':
+                    console.log(`Stream started: ${data.method} at ${data.fps} FPS, format: ${data.format || 'screenshot'}`);
+                    streamFormat = data.format || 'screenshot';
+                    useWebCodecs = streamFormat === 'h264-binary' && checkWebCodecsSupport();
+
+                    if (!useWebCodecs && streamFormat === 'h264-binary') {
+                        console.warn('WebCodecs not supported, falling back to screenshot streaming');
+                        console.warn('For best performance, please use Chrome 94+ or Edge 94+');
+                        // Show user-friendly message
+                        updateConnectionStatus('error', 'WebCodecs không được hỗ trợ. Đang sử dụng screenshot streaming. Để có hiệu suất tốt nhất, vui lòng sử dụng Chrome 94+ hoặc Edge 94+');
+                        // Auto-fallback after a short delay
+                        setTimeout(() => {
+                            fallbackToScreenshot();
+                        }, 1000);
+                    }
+
+                    fpsCounter.classList.remove('hidden');
+                    if (screenshotInterval) {
+                        clearInterval(screenshotInterval);
+                        screenshotInterval = null;
+                    }
+                    updateFPS();
+                    break;
+                case 'error':
+                    console.error('WebSocket error:', data.message);
+                    // Show user-friendly error message for scrcpy installation
+                    if (data.message && (data.message.includes('scrcpy') || data.message.includes('không thể'))) {
+                        updateConnectionStatus('error', data.message);
+                    }
+                    break;
+            }
+        }
+
+        // Update connection status
+        function updateConnectionStatus(status, message) {
+            if (status === 'connected') {
+                connectionStatus.className = 'px-4 py-2.5 bg-green-600/20 border border-green-500/30 rounded-xl text-green-300 text-sm';
+                connectionStatus.innerHTML = `
+                    <div class="flex items-center space-x-2">
+                        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span>${message}</span>
+                    </div>
+                `;
+            } else if (status === 'error') {
+                connectionStatus.className = 'px-4 py-2.5 bg-red-600/20 border border-red-500/30 rounded-xl text-red-300 text-sm';
+                connectionStatus.innerHTML = `
+                    <div class="flex items-center space-x-2">
+                        <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span>${message}</span>
+                    </div>
+                `;
+            } else {
+                connectionStatus.className = 'px-4 py-2.5 bg-yellow-600/20 border border-yellow-500/30 rounded-xl text-yellow-300 text-sm';
+                connectionStatus.innerHTML = `
+                    <div class="flex items-center space-x-2">
+                        <svg class="w-5 h-5 animate-pulse flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        <span>${message}</span>
+                    </div>
+                `;
+            }
+        }
+
+        // Load devices - ONLY via WebSocket (no HTTP/MCP calls)
+        // Devices are automatically sent when WebSocket connects
+        function loadDevices() {
+            // Devices are received via WebSocket 'devices' message
+            // No need to make HTTP/MCP calls - just wait for WebSocket message
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                // Request device list via WebSocket if needed
+                // But usually it's sent automatically on connection
+            }
+        }
+
+        // Update device list
+        function updateDeviceList() {
+            deviceSelect.innerHTML = '<option value="">Chọn thiết bị...</option>';
+            devices.forEach(device => {
+                const option = document.createElement('option');
+                option.value = device.id;
+                option.textContent = `${device.name || device.id} ${device.status ? `(${device.status})` : ''}`;
+                deviceSelect.appendChild(option);
+            });
+        }
+
+        // Device selection
+        deviceSelect.addEventListener('change', (e) => {
+            selectedDevice = e.target.value;
+            // Notify parent window about device selection
+            if (window.parent && window.parent !== window) {
+                window.parent.postMessage({
+                    type: 'device_selected',
+                    device_id: selectedDevice
+                }, '*');
+            }
+
+            if (selectedDevice) {
+                const device = devices.find(d => d.id === selectedDevice);
+                if (device) {
+                    deviceInfo.classList.remove('hidden');
+                    deviceInfo.innerHTML = `
+                        <div class="font-medium truncate">${device.name || device.id}</div>
+                        <div class="text-blue-400/80 truncate">ID: ${device.id}</div>
+                        ${device.status ? `<div class="text-blue-400/80 truncate">Status: ${device.status}</div>` : ''}
+                    `;
+                    streamControls.classList.remove('hidden');
+                    noStreamTitle.textContent = device.name || device.id;
+                    noStreamText.textContent = 'Nhấn "Bắt đầu Stream" để bắt đầu streaming realtime';
+                }
+            } else {
+                deviceInfo.classList.add('hidden');
+                streamControls.classList.add('hidden');
+                noStreamTitle.textContent = 'Chưa chọn thiết bị';
+                noStreamText.textContent = 'Chọn thiết bị từ danh sách ở trên và bắt đầu stream';
+            }
+        });
+
+        // Refresh devices
+        refreshDevicesBtn.addEventListener('click', loadDevices);
+
+        // Start stream
+        startStreamBtn.addEventListener('click', () => {
+            if (!selectedDevice) return;
+            startStream();
+        });
+
+        // Stop stream
+        stopStreamBtn.addEventListener('click', () => {
+            stopStream();
+        });
+
+        // Start streaming - VIDEO ONLY MODE (no interaction)
+        function startStream() {
+            if (!selectedDevice) return;
+
+            streaming = true;
+            noStream.classList.add('hidden');
+            streamContainer.classList.remove('hidden');
+            loadingIndicator.classList.remove('hidden');
+            startStreamBtn.classList.add('hidden');
+            stopStreamBtn.classList.remove('hidden');
+            // Hide controls panel - video only mode, no interaction
+            controlsPanel.classList.add('hidden');
+            fpsCounter.classList.remove('hidden');
+            frameCount = 0;
+            fpsStartTime = performance.now();
+
+            // Disable pointer events on canvas - video only, no interaction
+            phoneCanvas.style.pointerEvents = 'none';
+            phoneCanvas.style.cursor = 'default';
+
+            // Notify parent window about streaming start
+            if (window.parent && window.parent !== window) {
+                window.parent.postMessage({
+                    type: 'stream_started',
+                    device_id: selectedDevice,
+                    streaming: true
+                }, '*');
+            }
+
+                    // Start scrcpy professional streaming
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'startScreenStream',
+                    deviceId: selectedDevice,
+                    maxFps: 60,
+                    bitRate: '2M',
+                    maxSize: '720',
+                    encoder: 'h264'
+                }));
+            } else {
+                // Wait for WebSocket connection
+                console.warn('WebSocket not connected, waiting...');
+                setTimeout(() => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({
+                            type: 'startScreenStream',
+                            deviceId: selectedDevice,
+                            maxFps: 60,
+                            bitRate: '2M',
+                            maxSize: '720',
+                            encoder: 'h264'
+                        }));
+                    }
+                }, 1000);
+            }
+        }
+
+        // Stop streaming with complete cleanup
+        function stopStream() {
+            streaming = false;
+            streamContainer.classList.add('hidden');
+            noStream.classList.remove('hidden');
+            startStreamBtn.classList.remove('hidden');
+            stopStreamBtn.classList.add('hidden');
+            controlsPanel.classList.add('hidden');
+            fpsCounter.classList.add('hidden');
+
+            // Re-enable pointer events
+            phoneCanvas.style.pointerEvents = 'auto';
+
+            // Clear frame queue
+            frameQueue.length = 0;
+            renderScheduled = false;
+            isRendering = false;
+            droppedFrames = 0;
+            pendingFrames = 0;
+            lastFrameTime = 0;
+
+            // Cleanup WebCodecs decoder
+            if (videoDecoder) {
+                try {
+                    // Flush decoder before closing
+                    if (videoDecoder.state === 'configured') {
+                        videoDecoder.flush().catch(() => {}); // Ignore flush errors
+                    }
+                    videoDecoder.close();
+                } catch (e) {
+                    // Ignore errors
+                }
+                videoDecoder = null;
+            }
+            decoderConfig = null;
+            streamFormat = 'screenshot';
+            useWebCodecs = false;
+            frameTimestamp = 0;
+            firstKeyFrameReceived = false;
+
+            // Notify parent window about streaming stop
+            if (window.parent && window.parent !== window) {
+                window.parent.postMessage({
+                    type: 'stream_stopped',
+                    device_id: selectedDevice,
+                    streaming: false
+                }, '*');
+            }
+
+            if (screenshotInterval) {
+                clearInterval(screenshotInterval);
+                screenshotInterval = null;
+            }
+
+            if (frameRequestId) {
+                cancelAnimationFrame(frameRequestId);
+                frameRequestId = null;
+            }
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'stopScreenStream',
+                    deviceId: selectedDevice
+                }));
+            }
+        }
+
+        // DISABLED: HTTP polling fallback removed - video streaming only
+        // Only scrcpy video streaming is supported
+
+        // Update screenshot using Canvas for better performance
+        function updateScreenshot(base64) {
+            const now = performance.now();
+            if (now - lastUpdateTime >= 16) {
+                const dataUrl = `data:image/png;base64,${base64}`;
+
+                // Use createImageBitmap for async decoding (faster)
+                if (typeof createImageBitmap !== 'undefined') {
+                    fetch(dataUrl)
+                        .then(res => res.blob())
+                        .then(blob => createImageBitmap(blob))
+                        .then(bitmap => {
+                            drawToCanvas(bitmap);
+                            loadingIndicator.classList.add('hidden');
+                        })
+                        .catch(err => {
+                            // Fallback to Image
+                            const img = new Image();
+                            img.onload = () => {
+                                drawToCanvas(img);
+                                loadingIndicator.classList.add('hidden');
+                            };
+                            img.src = dataUrl;
+                        });
+                } else {
+                    // Fallback for older browsers
+                    if (!currentImage || currentImage.src !== dataUrl) {
+                        const img = new Image();
+                        img.onload = () => {
+                            currentImage = img;
+                            drawToCanvas(img);
+                            loadingIndicator.classList.add('hidden');
+                        };
+                        img.src = dataUrl;
+                    }
+                }
+                lastUpdateTime = now;
+            }
+        }
+
+        // Draw to canvas with proper scaling - full phone display, no border
+        function drawToCanvas(source) {
+            const container = streamContainer;
+            if (!container) return;
+
+            const containerWidth = container.clientWidth;
+            const containerHeight = container.clientHeight;
+            const phoneAspectRatio = 9 / 16;
+            const sourceWidth = source.width || source.naturalWidth;
+            const sourceHeight = source.height || source.naturalHeight;
+
+            // Calculate size to fit container while maintaining aspect ratio
+            let width, height;
+            const containerAspectRatio = containerWidth / containerHeight;
+
+            if (containerAspectRatio > phoneAspectRatio) {
+                // Container is wider, fit to height
+                height = containerHeight;
+                width = height * phoneAspectRatio;
+            } else {
+                // Container is taller, fit to width
+                width = containerWidth;
+                height = width / phoneAspectRatio;
+            }
+
+            phoneCanvas.width = width;
+            phoneCanvas.height = height;
+
+            // Use high-quality rendering
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(source, 0, 0, width, height);
+        }
+
+        // DISABLED: Device controls removed for video-only mode
+        // No interaction commands needed - video display only
+        async function sendCommand(endpoint, data, useMcp = true) {
+            // Video-only mode: no commands sent
+            return;
+        }
+
+        // DISABLED: Button controls removed for video-only mode
+        // No interaction buttons - video display only
+
+        // Listen for messages from parent window (for compact mode)
+        window.addEventListener('message', (event) => {
+            if (event.data && event.data.type === 'command') {
+                const { command, data } = event.data;
+                if (command === 'key' && data) {
+                    sendCommand('key', data);
+                }
+            } else if (event.data && event.data.type === 'device_select') {
+                // Handle device selection from parent
+                const deviceSelect = document.getElementById('deviceSelect');
+                if (deviceSelect && event.data.deviceId) {
+                    deviceSelect.value = event.data.deviceId;
+                    selectedDevice = event.data.deviceId;
+                    deviceSelect.dispatchEvent(new Event('change'));
+                }
+            } else if (event.data && event.data.type === 'refresh_devices') {
+                // Refresh device list
+                loadDevices();
+            } else if (event.data && event.data.type === 'start_stream') {
+                // Start stream from parent
+                if (event.data.deviceId) {
+                    selectedDevice = event.data.deviceId;
+                    const deviceSelect = document.getElementById('deviceSelect');
+                    if (deviceSelect) {
+                        deviceSelect.value = event.data.deviceId;
+                    }
+                    startStream();
+                }
+            } else if (event.data && event.data.type === 'stop_stream') {
+                // Stop stream from parent
+                stopStream();
+            }
+        });
+
+        // Send device list updates to parent window
+        const originalUpdateDeviceList = updateDeviceList;
+        updateDeviceList = function() {
+            originalUpdateDeviceList();
+            if (window.parent && window.parent !== window) {
+                window.parent.postMessage({
+                    type: 'devices_updated',
+                    devices: devices
+                }, '*');
+            }
+        };
+
+        // Send initial device list when loaded (for compact mode)
+        if (isCompact) {
+            setTimeout(() => {
+                if (devices.length > 0 && window.parent && window.parent !== window) {
+                    window.parent.postMessage({
+                        type: 'devices_updated',
+                        devices: devices
+                    }, '*');
+                }
+            }, 1000);
+        }
+
+        // Enhanced interaction handlers
+        let touchStart = null;
+        let touchStartTime = null;
+        let isDragging = false;
+        let dragStart = null;
+        const LONG_PRESS_DURATION = 500; // ms
+        const SWIPE_THRESHOLD = 30; // pixels
+
+        // Get canvas coordinates from event with validation
+        function getCanvasCoordinates(e) {
+            if (!phoneCanvas || !streaming) return null;
+
+            const rect = phoneCanvas.getBoundingClientRect();
+            if (!rect.width || !rect.height) return null;
+
+            const clientX = e.touches ? (e.touches[0]?.clientX || 0) : (e.clientX || 0);
+            const clientY = e.touches ? (e.touches[0]?.clientY || 0) : (e.clientY || 0);
+
+            // Check if click is within canvas bounds
+            if (clientX < rect.left || clientX > rect.right ||
+                clientY < rect.top || clientY > rect.bottom) {
+                return null;
+            }
+
+            const scaleX = phoneCanvas.width / rect.width;
+            const scaleY = phoneCanvas.height / rect.height;
+
+            const x = Math.max(0, Math.min(phoneCanvas.width, Math.round((clientX - rect.left) * scaleX)));
+            const y = Math.max(0, Math.min(phoneCanvas.height, Math.round((clientY - rect.top) * scaleY)));
+
+            return { x, y, clientX, clientY };
+        }
+
+        // Visual feedback for interactions
+        function showIndicator(x, y, type = 'click') {
+            const indicator = document.createElement('div');
+            indicator.className = 'click-indicator';
+            indicator.style.position = 'fixed';
+            indicator.style.left = (x - 20) + 'px';
+            indicator.style.top = (y - 20) + 'px';
+            indicator.style.zIndex = '10000';
+            if (type === 'longpress') {
+                indicator.style.borderColor = 'rgba(255, 165, 0, 0.8)';
+            }
+            document.body.appendChild(indicator);
+            setTimeout(() => indicator.remove(), 600);
+        }
+
+        // Touch/Mouse Start
+        function handleStart(e) {
+            if (!streaming || !selectedDevice) return;
+            e.preventDefault();
+
+            const coords = getCanvasCoordinates(e);
+            if (!coords) return;
+
+            touchStart = coords;
+            touchStartTime = Date.now();
+            isDragging = false;
+            dragStart = coords;
+        }
+
+        // Touch/Mouse Move
+        function handleMove(e) {
+            if (!streaming || !selectedDevice || !touchStart) return;
+            e.preventDefault();
+
+            const coords = getCanvasCoordinates(e);
+            const deltaX = Math.abs(coords.x - touchStart.x);
+            const deltaY = Math.abs(coords.y - touchStart.y);
+
+            // Detect if user is dragging
+            if (deltaX > 5 || deltaY > 5) {
+                isDragging = true;
+            }
+        }
+
+        // Touch/Mouse End
+        function handleEnd(e) {
+            if (!streaming || !selectedDevice || !touchStart) {
+                touchStart = null;
+                isDragging = false;
+                return;
+            }
+            e.preventDefault();
+
+            const coords = getCanvasCoordinates(e) || touchStart; // Fallback to start if end is outside
+            const duration = Date.now() - touchStartTime;
+            const deltaX = coords.x - touchStart.x;
+            const deltaY = coords.y - touchStart.y;
+            const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+
+            try {
+                // Long press
+                if (duration >= LONG_PRESS_DURATION && !isDragging) {
+                    showIndicator(touchStart.clientX, touchStart.clientY, 'longpress');
+                    sendCommand('click', { x: touchStart.x, y: touchStart.y }, true);
+                    // Long press is typically used for context menu, but we'll treat it as click
+                }
+                // Swipe
+                else if (isDragging && distance > SWIPE_THRESHOLD) {
+                    sendCommand('swipe', {
+                        x1: touchStart.x,
+                        y1: touchStart.y,
+                        x2: coords.x,
+                        y2: coords.y,
+                        duration: Math.min(300, Math.max(100, duration))
+                    }, true);
+                }
+                // Click/Tap
+                else if (!isDragging && distance < 10) {
+                    showIndicator(touchStart.clientX, touchStart.clientY, 'click');
+                    sendCommand('click', { x: touchStart.x, y: touchStart.y }, true);
+                }
+            } catch (error) {
+                console.error('Error handling interaction:', error);
+            }
+
+            // Reset
+            touchStart = null;
+            touchStartTime = null;
+            isDragging = false;
+            dragStart = null;
+        }
+
+        // DISABLED: All interaction events removed for video-only mode
+        // Canvas is set to pointer-events: none when streaming
+        // No mouse or touch events - video display only
+
+        // Resize handler
+        function handleResize() {
+            if (currentImage && streaming) {
+                drawToCanvas(currentImage);
+            }
+        }
+
+        // Initialize
+        window.addEventListener('resize', handleResize);
+        connectWebSocket();
+    </script>
+</body>
+</html>

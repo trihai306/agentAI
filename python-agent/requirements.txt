@@ -1,0 +1,36 @@
+# OpenAI Agents SDK - Latest version (2025)
+openai-agents>=0.6.1
+
+# OpenAI SDK - Latest version (2025)
+openai>=2.8.1
+
+# FastAPI and ASGI server - Latest versions (2025)
+fastapi>=0.121.3
+uvicorn[standard]>=0.38.0
+
+# WebSocket support - Latest version (2025)
+websockets>=15.0.1
+
+# Data validation and parsing - Latest versions (2025)
+pydantic>=2.12.4
+pyyaml>=6.0.2
+
+# Image processing - Latest version (2025)
+pillow>=12.0.0
+
+# XML parsing - Latest version (2025)
+lxml>=6.0.2
+
+# File handling - Latest versions (2025)
+python-multipart>=0.0.12
+aiofiles>=24.1.0
+
+# Windows registry access (for PATH management on Windows)
+# Note: winreg is built-in on Windows, no need to install
+
+# Development tools - File watching for auto-reload (2025)
+watchfiles>=0.21.0
+
+# HTTP client for backend sync (2025)
+httpx>=0.27.0
+
