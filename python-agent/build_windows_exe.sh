@@ -5,6 +5,9 @@
 
 set -e
 
+# Initialize variables
+STASHED=false
+
 echo "========================================"
 echo "AutoAIphone Agent - Windows EXE Build"
 echo "========================================"
@@ -36,10 +39,10 @@ if [ -z "$REPO_REMOTE" ]; then
 fi
 
 # Extract repo owner/name from URL
-REPO_PATH=$(echo "$REPO_REMOTE" | sed -E 's|.*github.com[:/]([^/]+/[^/]+)(\.git)?$|\1|')
+REPO_PATH=$(echo "$REPO_REMOTE" | sed -E 's|.*github.com[:/]([^/]+/[^/]+)(\.git)?$|\1|' | sed 's|\.git$||')
 if [ -z "$REPO_PATH" ] || [ "$REPO_PATH" = "$REPO_REMOTE" ]; then
     # Try alternative format
-    REPO_PATH=$(echo "$REPO_REMOTE" | sed -E 's|.*github.com/([^/]+/[^/]+)(\.git)?$|\1|')
+    REPO_PATH=$(echo "$REPO_REMOTE" | sed -E 's|.*github.com/([^/]+/[^/]+)(\.git)?$|\1|' | sed 's|\.git$||')
 fi
 
 echo "[INFO] Repository: $REPO_REMOTE"
@@ -90,7 +93,7 @@ if ! git diff-index --quiet HEAD --; then
     read -p "Choose option (1/2/3) [default: 1]: " -r
     REPLY=${REPLY:-1}  # Default to 1 if empty
     echo ""
-    
+
     if [[ $REPLY =~ ^[1]$ ]]; then
         echo "[INFO] Committing changes..."
         git add .
@@ -240,4 +243,12 @@ echo "✅ Build triggered successfully!"
 echo "📦 Download the .exe from GitHub Actions when build completes"
 echo "🔒 Source code is hidden in .exe file"
 echo ""
+
+# Restore stashed changes if any
+if [ "$STASHED" = true ]; then
+    echo "[INFO] Restoring stashed changes..."
+    git stash pop > /dev/null 2>&1 || true
+    echo "✅ Stashed changes restored"
+    echo ""
+fi
 
