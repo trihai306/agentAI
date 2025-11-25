@@ -1,0 +1,56 @@
+========================================
+AUTOAIphone AGENT - BUILD WINDOWS EXE
+========================================
+
+HƯỚNG DẪN BUILD TỰ ĐỘNG
+------------------------
+
+1. Đảm bảo đã cài Python 3.11+ trên Windows
+   Tải tại: https://www.python.org/downloads/
+
+2. Mở Command Prompt (CMD) hoặc PowerShell
+
+3. Di chuyển vào thư mục python-agent:
+   cd path\to\python-agent
+
+4. Chạy script build:
+   build_windows.bat
+
+5. Chờ 5-10 phút để build hoàn thành
+
+6. File exe sẽ ở: dist-windows\AutoAIphoneAgent.exe
+
+========================================
+KẾT QUẢ BUILD
+========================================
+
+Sau khi build xong, bạn sẽ có:
+
+dist-windows\
+├── AutoAIphoneAgent.exe      (File exe chính)
+├── venv\                      (Virtual environment)
+├── config\                    (Configuration)
+├── launcher.bat               (Optional)
+└── AutoAIphoneAgent-Windows.zip (Package đầy đủ)
+
+========================================
+SỬ DỤNG
+========================================
+
+1. Chạy AutoAIphoneAgent.exe
+2. Click "Cài đặt" → "Install All Requirements"
+3. Click "Start Agent" → Agent sẽ chạy
+
+HTTP Server: http://127.0.0.1:3001
+WebSocket: ws://127.0.0.1:3002
+
+========================================
+LƯU Ý
+========================================
+
+- File exe đã tích hợp main.py và agent/ package
+- Code đã được compile thành bytecode
+- Chỉ cần cài ADB (sẽ tự động cài nếu chưa có)
+
+========================================
+

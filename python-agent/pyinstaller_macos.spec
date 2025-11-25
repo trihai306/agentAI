@@ -1,29 +1,40 @@
 # -*- mode: python ; coding: utf-8 -*-
+# PyInstaller spec file for macOS GUI version
 
 block_cipher = None
 
 a = Analysis(
-    ['main.py'],
+    ['gui.py', 'installer.py', 'main.py'],  # Include all main files
     pathex=[],
     binaries=[],
     datas=[
         ('config', 'config'),
+        ('agent', 'agent'),  # Include entire agent package
     ],
     hiddenimports=[
-        'uvicorn.lifespan.on',
-        'uvicorn.lifespan.off',
-        'uvicorn.protocols.websockets.auto',
-        'uvicorn.protocols.http.auto',
-        'uvicorn.loops.auto',
-        'uvicorn.logging',
-        'openai.agents',
+        'tkinter',
+        'tkinter.ttk',
+        '_tkinter',
+        'webbrowser',
+        'threading',
+        'subprocess',
+        'pathlib',
+        'installer',
+        'installer.AgentInstaller',
+        # Include main and agent modules
+        'main',
+        'agent',
+        'agent.adb',
+        'agent.adb.adb_client',
+        'agent.adb.adb_installer',
+        'agent.server',
+        'agent.server.http_server',
+        'agent.server.websocket_server',
+        'agent.ui_automator',
+        'asyncio',
+        'yaml',
         'fastapi',
         'uvicorn',
-        'websockets',
-        'pydantic',
-        'yaml',
-        'PIL',
-        'lxml',
     ],
     hookspath=[],
     hooksconfig={},
@@ -51,11 +62,11 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,  # Set to False for windowed mode
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=None,
 )
-

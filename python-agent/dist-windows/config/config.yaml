@@ -1,0 +1,36 @@
+server:
+  http_port: 3001
+  websocket_port: 3002
+  host: "127.0.0.1"
+
+adb:
+  # Auto-detect ADB path, or specify custom path
+  # If ADB not found, it will be auto-installed to ~/.local/bin/adb
+  path: null  # null = auto-detect and auto-install if needed
+  # Custom paths (optional):
+  # path: "/usr/local/bin/adb"  # Mac/Linux
+  # path: "C:\\adb\\adb.exe"    # Windows
+
+  # Auto-install settings
+  auto_install: true  # Automatically install ADB if not found
+  install_dir: null  # null = use default (~/.local/bin/adb), or specify custom directory
+  add_to_path: true  # Add ADB to PATH after installation (requires terminal restart)
+
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: null  # null = console only, or specify path like "logs/agent.log"
+
+agent:
+  # Default model settings (can be overridden by frontend)
+  default_provider: "openai"
+  default_model: "gpt-4o"
+
+  # Thinking and analysis settings
+  enable_structured_thinking: true
+  enable_tool_analysis: true
+
+  # Max turns limit (can be overridden by frontend)
+  # Set to null or very large number (9999) for unlimited turns
+  max_turns: null  # null = unlimited (will be set to 9999 internally)
+
